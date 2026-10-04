@@ -1,0 +1,43 @@
+name: Publish
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      unpublished: ${{ steps.check.outputs.unpublished }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - id: check
+        run: |
+          version=$(uv version --short)
+          status=$(curl -so /dev/null -w '%{http_code}' \
+            "https://pypi.org/pypi/cloudflare-skip/$version/json")
+          echo "cloudflare-skip $version is $status on PyPI"
+          echo "unpublished=$([ "$status" = 404 ] && echo true || echo false)" \
+            >>"$GITHUB_OUTPUT"
+
+  test:
+    needs: version
+    if: needs.version.outputs.unpublished == 'true'
+    uses: ./.github/workflows/test.yml
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv build
+      - run: uvx twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

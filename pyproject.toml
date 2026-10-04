@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cloudflare-skip"
+version = "0.1.0"
+description = "Skip Cloudflare challenges: solve once in a real browser, then reuse the clearance with fast HTTP requests."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "tn3w", email = "tn3w@protonmail.com" }]
+keywords = [
+    "cloudflare",
+    "cloudflare-bypass",
+    "turnstile",
+    "captcha",
+    "scraping",
+    "anti-bot",
+    "cf-clearance",
+    "nodriver",
+    "curl-cffi",
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
+]
+dependencies = ["curl-cffi>=0.16.3", "nodriver>=0.50.3"]
+
+[project.scripts]
+cloudflare-skip = "cloudflare_skip.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/tn3w/cloudflare-skip"
+Source = "https://github.com/tn3w/cloudflare-skip"
+Issues = "https://github.com/tn3w/cloudflare-skip/issues"
+
+[dependency-groups]
+dev = ["pytest>=9"]
+
+[tool.hatch.build]
+targets.wheel.packages = ["cloudflare_skip"]
+targets.sdist.include = ["/cloudflare_skip", "/tests"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 90
+src = [".", "tests", "scripts"]
+lint.select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
