@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cloudflare-skip"
-version = "0.1.0"
+version = "1.0.0"
 description = "Skip Cloudflare challenges: solve once in a real browser, then reuse the clearance with fast HTTP requests."
 readme = "README.md"
 license = "Apache-2.0"
@@ -23,7 +23,7 @@ keywords = [
 ]
 requires-python = ">=3.10"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",

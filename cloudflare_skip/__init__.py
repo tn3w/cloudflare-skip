@@ -9,9 +9,13 @@ from curl_cffi import requests
 
 CACHE_FILE = Path.home() / ".cache" / "cloudflare_skip.json"
 TIMEOUT_SECONDS = 30
-TICK_AFTER_STEPS = 28
+TURNSTILE_HOST = "challenges.cloudflare.com"
 
-__all__ = ["get", "wait_for_clearance"]
+__all__ = ["ChallengeError", "get", "wait_for_clearance"]
+
+
+class ChallengeError(RuntimeError):
+    """Cloudflare still challenges the request after a solved clearance."""
 
 
 def is_challenge(response) -> bool:
@@ -19,12 +23,18 @@ def is_challenge(response) -> bool:
 
 
 def load_cache() -> dict:
-    return json.loads(CACHE_FILE.read_text()) if CACHE_FILE.exists() else {}
+    try:
+        return json.loads(CACHE_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
 def save_clearance(host: str, clearance: dict) -> None:
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE_FILE.write_text(json.dumps({**load_cache(), host: clearance}))
+    temporary = CACHE_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps({**load_cache(), host: clearance}))
+    temporary.chmod(0o600)
+    temporary.replace(CACHE_FILE)
 
 
 CHALLENGE_SCRIPT = "!!window._cf_chl_opt"
@@ -45,6 +55,30 @@ async def press(page, key: str, code: str, key_code: int, text: str | None = Non
         await asyncio.sleep(0.08)
 
 
+def contains_checkbox(node) -> bool:
+    if node.node_name == "INPUT" and "checkbox" in (node.attributes or []):
+        return True
+    children = [*(node.children or []), *(node.shadow_roots or [])]
+    return any(contains_checkbox(child) for child in children)
+
+
+async def checkbox_ready(browser) -> bool:
+    """Whether the Turnstile frame has rendered its checkbox (closed shadow DOM too)."""
+    from nodriver import cdp
+    from nodriver.core.connection import ProtocolException
+
+    await browser.update_targets()
+    for tab in browser.targets:
+        if tab.target.type_ != "iframe" or TURNSTILE_HOST not in tab.target.url:
+            continue
+        try:
+            document = await tab.send(cdp.dom.get_document(depth=-1, pierce=True))
+        except ProtocolException:
+            return False
+        return contains_checkbox(document)
+    return False
+
+
 async def tick_checkbox(page) -> None:
     """Focus the Turnstile checkbox with Tab, toggle with Space.
 
@@ -57,12 +91,14 @@ async def tick_checkbox(page) -> None:
 
 async def wait_for_clearance(browser, page) -> dict:
     """Tick the checkbox if shown, return cookies + user agent once challenge is gone."""
-    for step in range(TIMEOUT_SECONDS * 10):
+    ticked = False
+    for _ in range(TIMEOUT_SECONDS * 10):
         cookies = {c.name: c.value for c in await browser.cookies.get_all()}
         if "cf_clearance" in cookies and not await page.evaluate(CHALLENGE_SCRIPT):
             user_agent = await page.evaluate("navigator.userAgent")
             return {"cookies": cookies, "user_agent": user_agent}
-        if step == TICK_AFTER_STEPS:
+        if not ticked and await checkbox_ready(browser):
+            ticked = True
             await tick_checkbox(page)
         await asyncio.sleep(0.1)
     raise TimeoutError(f"challenge not solved in {TIMEOUT_SECONDS}s")
@@ -83,19 +119,28 @@ async def solve_in_browser(url: str) -> dict:
 session = requests.Session(impersonate="chrome")
 
 
-def fetch(url: str, clearance: dict | None = None):
-    headers = {"User-Agent": clearance["user_agent"]} if clearance else {}
-    cookies = clearance["cookies"] if clearance else {}
-    return session.get(url, headers=headers, cookies=cookies)
+def fetch(url: str, clearance: dict | None = None, **kwargs) -> requests.Response:
+    if clearance:
+        headers = {**kwargs.get("headers", {}), "User-Agent": clearance["user_agent"]}
+        cookies = {**kwargs.get("cookies", {}), **clearance["cookies"]}
+        kwargs = {**kwargs, "headers": headers, "cookies": cookies}
+    return session.get(url, **kwargs)
 
 
-def get(url: str):
-    """GET url, solving the Cloudflare challenge in a browser only when needed."""
+def get(url: str, **kwargs) -> requests.Response:
+    """GET url, solving the Cloudflare challenge in a browser only when needed.
+
+    Keyword arguments (params, headers, cookies, timeout, ...) go to curl_cffi. The
+    user agent is always the solving browser's, since the clearance is bound to it.
+    """
     host = urlparse(url).netloc
-    response = fetch(url, load_cache().get(host))
+    response = fetch(url, load_cache().get(host), **kwargs)
     if not is_challenge(response):
         return response
 
     clearance = asyncio.run(solve_in_browser(url))
     save_clearance(host, clearance)
-    return fetch(url, clearance)
+    response = fetch(url, clearance, **kwargs)
+    if is_challenge(response):
+        raise ChallengeError(f"{host} still challenges after a solved clearance")
+    return response

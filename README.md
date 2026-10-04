@@ -32,28 +32,38 @@ cloudflare-skip https://cl-skip.tn3w.dev
 ```python
 from cloudflare_skip import get
 
-response = get("ttps://cl-skip.tn3w.dev")
+response = get("https://cl-skip.tn3w.dev", params={"q": "x"}, timeout=10)
 print(response.status_code, response.text)
 ```
 
-`get` returns a `curl_cffi` response. Needs Chrome or Chromium and a display
-(headful; headless gets flagged).
+`get(url, **kwargs)` returns a `curl_cffi` response; keyword arguments (`params`,
+`headers`, `cookies`, `timeout`, ...) go to `curl_cffi`. It raises `ChallengeError` if
+Cloudflare still challenges after a solve and `TimeoutError` if the browser cannot solve
+within 30s. The CLI prints the body, writes the status to stderr and exits 1 on 4xx/5xx.
+
+Needs Chrome or Chromium and a display (headful; headless gets flagged).
 
 ## How it works
 
 1. Request with `curl_cffi` (Chrome TLS fingerprint) and the cached clearance.
 2. `cf-mitigated: challenge` → a real browser (`nodriver`) opens the page.
-3. Interactive Turnstile: after 2.8s `Tab` focuses the checkbox, `Space` ticks it.
+3. Interactive Turnstile: once its checkbox renders (detected through the frame's DOM,
+   shadow roots included), `Tab` focuses it and `Space` ticks it.
 4. Once `cf_clearance` exists and the challenge page is gone, cookies + user agent are
    cached per host in `~/.cache/cloudflare_skip.json` and replayed over HTTP.
 
 | Run | Time |
 |-----|------|
 | First, browser solve (non-interactive) | ~2.9s |
-| First, browser solve (interactive) | ~5.7s |
+| First, browser solve (interactive) | ~4.3s |
 | Cached, in-process | ~0.02-0.1s |
 
 ## Notes
+
+- The API is synchronous; from async code use `await asyncio.to_thread(get, url)`.
+- A clearance is bound to the user agent and IP of the solving browser: `get` always
+  sends the browser's user agent, and a proxy passed in `kwargs` makes the replay fail
+  with `ChallengeError`. The cache holds session cookies, so it is created with mode 600.
 
 - Turnstile rejected every CDP mouse click tried (bezier, wind and jitter paths,
   pressure 0.5, moves during the spinner, click before or after load). Keyboard passes.
