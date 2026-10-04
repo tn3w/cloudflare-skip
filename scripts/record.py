@@ -27,7 +27,12 @@ ASSETS = Path(__file__).parent.parent / "assets"
 START_SCRIPT = """
 (async () => {
     const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {cursor: "never", frameRate: 30},
+        video: {
+            cursor: "never",
+            frameRate: 30,
+            width: %(width)d,
+            height: %(height)d,
+        },
     });
     window.chunks = [];
     window.recorder = new MediaRecorder(stream, {videoBitsPerSecond: 8000000});
@@ -123,7 +128,7 @@ async def record(scheme: str, output: Path) -> None:
         await fit_window(target)
         recorder = await browser.get(RECORDER_URL, new_tab=True)
         await wait_until_secure(recorder)
-        await run_script(recorder, START_SCRIPT)
+        await run_script(recorder, START_SCRIPT % {"width": WIDTH, "height": HEIGHT})
         await target.bring_to_front()
         await target.get(URL)
         await wait_for_clearance(browser, target)
