@@ -99,16 +99,20 @@ async def wait_until_secure(page) -> None:
 
 def video_to_gif(video: Path, output: Path) -> None:
     with tempfile.TemporaryDirectory() as directory:
-        frames = Path(directory, "%04d.png")
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-ss", str(SKIP_BLANK_SECONDS)]
-            + ["-i", str(video)]
-            + ["-vf", f"fps={FRAMES_PER_SECOND}", str(frames)],
+            [
+                *("ffmpeg", "-y", "-loglevel", "error", "-ss", str(SKIP_BLANK_SECONDS)),
+                *("-i", str(video), "-vf", f"fps={FRAMES_PER_SECOND}"),
+                str(Path(directory, "%04d.png")),
+            ],
             check=True,
         )
         subprocess.run(
-            ["gifski", "--quiet", "--fps", str(FRAMES_PER_SECOND), "-o", str(output)]
-            + sorted(map(str, Path(directory).glob("*.png"))),
+            [
+                *("gifski", "--quiet", "--fps", str(FRAMES_PER_SECOND)),
+                *("-o", str(output)),
+                *map(str, sorted(Path(directory).glob("*.png"))),
+            ],
             check=True,
         )
 

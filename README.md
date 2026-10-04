@@ -26,13 +26,13 @@ with fast HTTP requests.**
 
 ```bash
 pip install cloudflare-skip
-cloudflare-skip https://example.com
+cloudflare-skip https://cl-skip.tn3w.dev
 ```
 
 ```python
 from cloudflare_skip import get
 
-response = get("https://example.com")
+response = get("ttps://cl-skip.tn3w.dev")
 print(response.status_code, response.text)
 ```
 
