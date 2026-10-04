@@ -2,12 +2,12 @@
 
 <p>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/non-interactive-dark.gif">
-    <img src="assets/non-interactive-light.gif" width="49%" alt="Non-interactive challenge">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tn3w/cloudflare-skip/master/assets/non-interactive-dark.gif">
+    <img src="https://raw.githubusercontent.com/tn3w/cloudflare-skip/master/assets/non-interactive-light.gif" width="49%" alt="Non-interactive challenge">
   </picture>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/interactive-dark.gif">
-    <img src="assets/interactive-light.gif" width="49%" alt="Interactive challenge">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tn3w/cloudflare-skip/master/assets/interactive-dark.gif">
+    <img src="https://raw.githubusercontent.com/tn3w/cloudflare-skip/master/assets/interactive-light.gif" width="49%" alt="Interactive challenge">
   </picture>
 </p>
 
@@ -18,7 +18,7 @@ with fast HTTP requests.**
 
 [![PyPI](https://img.shields.io/pypi/v/cloudflare-skip?color=1868f2)](https://pypi.org/project/cloudflare-skip)
 [![Python](https://img.shields.io/pypi/pyversions/cloudflare-skip?color=1868f2)](https://pypi.org/project/cloudflare-skip)
-[![License](https://img.shields.io/badge/license-Apache--2.0-1868f2)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-1868f2)](https://github.com/tn3w/cloudflare-skip/blob/master/LICENSE)
 
 </div>
 
