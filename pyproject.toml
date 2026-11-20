@@ -18,7 +18,7 @@ keywords = [
     "scraping",
     "anti-bot",
     "cf-clearance",
-    "nodriver",
+    "chrome-devtools-protocol",
     "curl-cffi",
 ]
 requires-python = ">=3.10"
@@ -35,7 +35,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
     "Typing :: Typed",
 ]
-dependencies = ["curl-cffi>=0.16.3", "nodriver>=0.50.3"]
+dependencies = ["curl-cffi>=0.16.3", "websockets>=14"]
 
 [project.scripts]
 cloudflare-skip = "cloudflare_skip.__main__:main"

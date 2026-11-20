@@ -1,159 +1,119 @@
-"""Record Chrome solving the challenge as light + dark GIFs: record.py <name> [scheme]."""
+"""Record headless Chrome solving a challenge as GIFs: record.py <name> [scheme...]."""
 
-import asyncio
 import base64
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
-import nodriver
-from nodriver import cdp
+from websockets.sync.client import connect
 
-from cloudflare_skip import wait_for_clearance
+import cloudflare_skip as skip
 
-URL = "https://cl-skip.tn3w.dev/"
-RECORDER_URL = "https://example.com/"
-TARGET_TITLE = "recording-target"
+URLS = {
+    "non-interactive": "https://cl-skip.tn3w.dev/",
+    "interactive": "https://cl-skip.tn3w.dev/interactive",
+}
 WIDTH, HEIGHT = 440, 330
-PAGE_ZOOM = 0.5
-SHARING_BAR_HEIGHT = 56
+ZOOM = 0.5
+HEADLESS_BAR_HEIGHT = 86
 FRAMES_PER_SECOND = 20
 END_HOLD_SECONDS = 1.5
-SKIP_BLANK_SECONDS = 0.2
+RESTART_SECONDS = 0.5
 ASSETS = Path(__file__).parent.parent / "assets"
 
-START_SCRIPT = """
-(async () => {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-            cursor: "never",
-            frameRate: 30,
-            width: %(width)d,
-            height: %(height)d,
-        },
-    });
-    window.chunks = [];
-    window.recorder = new MediaRecorder(stream, {videoBitsPerSecond: 8000000});
-    recorder.ondataavailable = (event) => chunks.push(event.data);
-    recorder.start(100);
-})()
-"""
 
-STOP_SCRIPT = """
-new Promise((resolve) => {
-    recorder.onstop = () => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(",")[1]);
-        reader.readAsDataURL(new Blob(chunks, {type: "video/webm"}));
-    };
-    recorder.stop();
-})
-"""
+def command(connection, page: str, method: str, **params) -> None:
+    message = {"id": 0, "sessionId": page, "method": method, "params": params}
+    connection.send(json.dumps(message))
 
 
-async def run_script(page, script: str) -> str:
-    result, error = await page.send(
-        cdp.runtime.evaluate(
-            script, await_promise=True, user_gesture=True, return_by_value=True
-        )
-    )
-    if error:
-        raise RuntimeError(error.exception.description)
-    return result.value
-
-
-async def viewport_size(page) -> tuple[int, int]:
-    script = "JSON.stringify([innerWidth, innerHeight])"
-    width, height = json.loads(await page.evaluate(script))
-    return width, height
-
-
-async def fit_window(page) -> None:
-    """Size the window so the viewport is WIDTH x HEIGHT once the sharing bar shows."""
-    window_id, _ = await page.get_window()
-    normal = cdp.browser.Bounds(window_state=cdp.browser.WindowState.NORMAL)
-    await page.send(cdp.browser.set_window_bounds(window_id, normal))
-    wanted = (int(WIDTH / PAGE_ZOOM), int(HEIGHT / PAGE_ZOOM) + SHARING_BAR_HEIGHT)
-    for _ in range(10):
-        await asyncio.sleep(0.2)
-        width, height = await viewport_size(page)
-        if (width, height) == wanted:
-            return
-        _, bounds = await page.get_window()
-        fitted = cdp.browser.Bounds(
-            left=0,
-            top=0,
-            width=bounds.width - width + wanted[0],
-            height=bounds.height - height + wanted[1],
-        )
-        await page.send(cdp.browser.set_window_bounds(window_id, fitted))
-    raise RuntimeError(f"window did not fit {wanted}, last viewport {(width, height)}")
-
-
-async def wait_until_secure(page) -> None:
-    while not await page.evaluate("isSecureContext"):
-        await asyncio.sleep(0.05)
-
-
-def video_to_gif(video: Path, output: Path) -> None:
-    with tempfile.TemporaryDirectory() as directory:
-        subprocess.run(
-            [
-                *("ffmpeg", "-y", "-loglevel", "error", "-ss", str(SKIP_BLANK_SECONDS)),
-                *("-i", str(video), "-vf", f"fps={FRAMES_PER_SECOND}"),
-                str(Path(directory, "%04d.png")),
-            ],
-            check=True,
-        )
-        subprocess.run(
-            [
-                *("gifski", "--quiet", "--fps", str(FRAMES_PER_SECOND)),
-                *("-o", str(output)),
-                *map(str, sorted(Path(directory).glob("*.png"))),
-            ],
-            check=True,
-        )
-
-
-async def record(scheme: str, output: Path) -> None:
-    color_scheme = f"--blink-settings=preferredColorScheme={int(scheme == 'light')}"
-    browser_args = [
-        f"--auto-select-tab-capture-source-by-title={TARGET_TITLE}",
-        "--hide-scrollbars",
-        f"--force-device-scale-factor={PAGE_ZOOM}",
-        color_scheme,
-    ]
-    browser = await nodriver.start(browser_args=browser_args)
+def next_frame(connection, page: str) -> bytes | None:
     try:
-        target = await browser.get("about:blank")
-        await target.evaluate(f"document.title = '{TARGET_TITLE}'")
-        await fit_window(target)
-        recorder = await browser.get(RECORDER_URL, new_tab=True)
-        await wait_until_secure(recorder)
-        await run_script(recorder, START_SCRIPT % {"width": WIDTH, "height": HEIGHT})
-        await target.bring_to_front()
-        await target.get(URL)
-        await wait_for_clearance(browser, target)
-        await asyncio.sleep(END_HOLD_SECONDS)
-        recording = await run_script(recorder, STOP_SCRIPT)
-    finally:
-        browser.stop()
-
-    with tempfile.TemporaryDirectory() as directory:
-        video = Path(directory, "recording.webm")
-        video.write_bytes(base64.b64decode(recording))
-        video_to_gif(video, output)
+        message = json.loads(connection.recv(timeout=1 / FRAMES_PER_SECOND))
+    except TimeoutError:
+        return None
+    if message.get("method") != "Page.screencastFrame":
+        return None
+    frame_session = message["params"]["sessionId"]
+    command(connection, page, "Page.screencastFrameAck", sessionId=frame_session)
+    return base64.b64decode(message["params"]["data"])
 
 
-async def main(name: str, schemes: list[str]) -> None:
+def capture(endpoint: str, target: dict, folder: str, stop: threading.Event) -> None:
+    """Screencast the page at a steady frame rate, restarting it after navigations."""
+    with connect(endpoint, max_size=None) as connection:
+        page = skip.DevTools(connection).attach(target)
+        start = time.monotonic()
+        last_frame = start - RESTART_SECONDS
+        frame = 0
+        image = None
+        while not stop.is_set():
+            due = int((time.monotonic() - start) * FRAMES_PER_SECOND)
+            for number in range(frame, due + 1) if image else ():
+                Path(folder, f"{number:05d}.jpg").write_bytes(image)
+            frame = due + 1 if image else frame
+
+            if new_image := next_frame(connection, page):
+                image, last_frame = new_image, time.monotonic()
+            elif time.monotonic() - last_frame >= RESTART_SECONDS:
+                command(connection, page, "Page.startScreencast", format="jpeg")
+                last_frame = time.monotonic()
+
+
+def wait_until_passed(browser: skip.DevTools) -> None:
+    challenge_title = browser.targets("page")[0]["title"]
+    while browser.targets("page")[0]["title"] == challenge_title:
+        time.sleep(0.05)
+
+
+def record(url: str, scheme: str, output: Path) -> None:
+    executable = skip.find_browser()
+    flags = (
+        f"--window-size={int(WIDTH / ZOOM)},{int(HEIGHT / ZOOM) + HEADLESS_BAR_HEIGHT}",
+        f"--force-device-scale-factor={ZOOM}",
+        "--hide-scrollbars",
+        f"--blink-settings=preferredColorScheme={int(scheme == 'light')}",
+    )
+    user_agent = skip.headful_user_agent(executable)
+    with (
+        tempfile.TemporaryDirectory() as folder,
+        skip.open_browser(user_agent, executable, flags=flags) as browser,
+    ):
+        target = browser.targets("page")[0]
+        page = browser.attach(target)
+        port = browser.connection.remote_address[1]
+        endpoint = f"ws://127.0.0.1:{port}{browser.connection.request.path}"
+        stop = threading.Event()
+        capturer = threading.Thread(target=capture, args=(endpoint, target, folder, stop))
+        browser.send("Page.navigate", page, url=url)
+        capturer.start()
+
+        try:
+            skip.wait_for_cookies(browser, page, url)
+            wait_until_passed(browser)
+            time.sleep(END_HOLD_SECONDS)
+        finally:
+            stop.set()
+            capturer.join()
+
+        frames = sorted(map(str, Path(folder).glob("*.jpg")))
+        options = ["--quiet", "--fps", str(FRAMES_PER_SECOND), "-o", str(output)]
+        subprocess.run(["gifski", *options, *frames], check=True)
+
+
+def main(name: str, schemes: list[str]) -> None:
+    os.environ["LANGUAGE"] = "en"
     ASSETS.mkdir(exist_ok=True)
     for scheme in schemes:
         output = ASSETS / f"{name}-{scheme}.gif"
-        await record(scheme, output)
+        record(URLS[name], scheme, output)
         print(f"{output}: {output.stat().st_size // 1024} KB")
 
 
 if __name__ == "__main__":
-    asyncio.run(main(sys.argv[1], sys.argv[2:] or ["light", "dark"]))
+    main(sys.argv[1], sys.argv[2:] or ["light", "dark"])

@@ -32,6 +32,16 @@ def test_is_challenge_reads_the_mitigation_header():
     assert not cloudflare_skip.is_challenge(make_response(200))
 
 
+def test_checkbox_is_found_inside_shadow_roots():
+    checkbox = {"nodeId": 7, "nodeName": "INPUT", "attributes": ["type", "checkbox"]}
+    shadow_root = {"nodeId": 3, "children": [checkbox]}
+    shadow_host = {"nodeId": 2, "nodeName": "DIV", "shadowRoots": [shadow_root]}
+    document = {"nodeId": 1, "nodeName": "#document", "children": [shadow_host]}
+
+    assert cloudflare_skip.find_checkbox(document) == 7
+    assert cloudflare_skip.find_checkbox({"nodeId": 3, "nodeName": "DIV"}) is None
+
+
 def test_clearance_is_cached_per_host():
     cloudflare_skip.save_clearance("a.example", CLEARANCE)
     cloudflare_skip.save_clearance("b.example", CLEARANCE)
@@ -72,11 +82,8 @@ def test_fetch_forces_the_clearance_user_agent_and_keeps_other_options(monkeypat
 
 
 def test_get_raises_when_the_challenge_survives_the_solve(monkeypatch):
-    async def solve_in_browser(url):
-        return CLEARANCE
-
     monkeypatch.setattr(cloudflare_skip, "fetch", fetch_challenged)
-    monkeypatch.setattr(cloudflare_skip, "solve_in_browser", solve_in_browser)
+    monkeypatch.setattr(cloudflare_skip, "solve", lambda url: CLEARANCE)
 
     with pytest.raises(cloudflare_skip.ChallengeError):
         cloudflare_skip.get("https://a.example/")
@@ -84,7 +91,7 @@ def test_get_raises_when_the_challenge_survives_the_solve(monkeypatch):
 
 def test_get_skips_the_browser_without_a_challenge(monkeypatch):
     monkeypatch.setattr(cloudflare_skip, "fetch", fetch_passed)
-    monkeypatch.setattr(cloudflare_skip, "solve_in_browser", pytest.fail)
+    monkeypatch.setattr(cloudflare_skip, "solve", pytest.fail)
 
     assert cloudflare_skip.get("https://a.example/").status_code == 200
 
@@ -92,7 +99,7 @@ def test_get_skips_the_browser_without_a_challenge(monkeypatch):
 def test_get_solves_once_then_reuses_the_cached_clearance(monkeypatch):
     solved = []
 
-    async def solve_in_browser(url):
+    def solve(url):
         solved.append(url)
         return CLEARANCE
 
@@ -100,7 +107,7 @@ def test_get_solves_once_then_reuses_the_cached_clearance(monkeypatch):
         return fetch_passed() if clearance else fetch_challenged()
 
     monkeypatch.setattr(cloudflare_skip, "fetch", fetch)
-    monkeypatch.setattr(cloudflare_skip, "solve_in_browser", solve_in_browser)
+    monkeypatch.setattr(cloudflare_skip, "solve", solve)
 
     assert cloudflare_skip.get("https://a.example/").status_code == 200
     assert cloudflare_skip.get("https://a.example/").status_code == 200

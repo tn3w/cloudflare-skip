@@ -13,8 +13,8 @@
 
 # cloudflare-skip
 
-**Skip Cloudflare challenges: solve once in a real browser, then reuse the clearance
-with fast HTTP requests.**
+**Skip Cloudflare challenges: solve once in headless Chrome, then reuse the clearance
+with fast HTTP requests. No display needed.**
 
 [![PyPI](https://img.shields.io/pypi/v/cloudflare-skip?color=1868f2)](https://pypi.org/project/cloudflare-skip)
 [![Python](https://img.shields.io/pypi/pyversions/cloudflare-skip?color=1868f2)](https://pypi.org/project/cloudflare-skip)
@@ -26,14 +26,17 @@ with fast HTTP requests.**
 
 ```bash
 pip install cloudflare-skip
-cloudflare-skip https://cl-skip.tn3w.dev
+cloudflare-skip https://cl-skip.tn3w.dev               # non-interactive challenge
+cloudflare-skip https://cl-skip.tn3w.dev/interactive   # interactive (checkbox) challenge
 ```
 
 ```python
-from cloudflare_skip import get
+from cloudflare_skip import get, solve
 
 response = get("https://cl-skip.tn3w.dev", params={"q": "x"}, timeout=10)
 print(response.status_code, response.text)
+
+clearance = solve("https://cl-skip.tn3w.dev")  # {"cookies": {...}, "user_agent": "..."}
 ```
 
 `get(url, **kwargs)` returns a `curl_cffi` response; keyword arguments (`params`,
@@ -41,22 +44,28 @@ print(response.status_code, response.text)
 Cloudflare still challenges after a solve and `TimeoutError` if the browser cannot solve
 within 30s. The CLI prints the body, writes the status to stderr and exits 1 on 4xx/5xx.
 
-Needs Chrome or Chromium and a display (headful; headless gets flagged).
+Needs Chrome or Chromium (found on `PATH`, or set `CHROME_PATH`). Runs headless, so it
+works on servers without a display; `solve(url, headless=False)` shows the window.
+As root (e.g. in Docker) the sandbox is disabled automatically.
 
 ## How it works
 
 1. Request with `curl_cffi` (Chrome TLS fingerprint) and the cached clearance.
-2. `cf-mitigated: challenge` → a real browser (`nodriver`) opens the page.
-3. Interactive Turnstile: once its checkbox renders (detected through the frame's DOM,
-   shadow roots included), `Tab` focuses it and `Space` ticks it.
-4. Once `cf_clearance` exists and the challenge page is gone, cookies + user agent are
-   cached per host in `~/.cache/cloudflare_skip.json` and replayed over HTTP.
+2. `cf-mitigated: challenge` → headless Chrome opens the page, driven over the DevTools
+   protocol directly (no automation framework).
+3. Interactive Turnstile: once its checkbox renders (found through the frame's DOM,
+   closed shadow roots included), it is focused and ticked with `Space`.
+4. As soon as `cf_clearance` is set, cookies + user agent are cached per host in
+   `~/.cache/cloudflare_skip.json` and replayed over HTTP.
 
 | Run | Time |
 |-----|------|
-| First, browser solve (non-interactive) | ~2.9s |
-| First, browser solve (interactive) | ~4.3s |
+| First, browser solve (non-interactive, `/`) | ~2.7-3.1s |
+| First, browser solve (interactive, `/interactive`) | ~3.2-3.9s |
 | Cached, in-process | ~0.02-0.1s |
+
+Almost all of the solve time is Cloudflare itself: Chrome is ready after 0.2s, the
+challenge loads at ~0.8s, the rest is Cloudflare's check (and showing the checkbox).
 
 ## Notes
 
@@ -65,20 +74,26 @@ Needs Chrome or Chromium and a display (headful; headless gets flagged).
   sends the browser's user agent, and a proxy passed in `kwargs` makes the replay fail
   with `ChallengeError`. The cache holds session cookies, so it is created with mode 600.
 
-- Turnstile rejected every CDP mouse click tried (bezier, wind and jitter paths,
-  pressure 0.5, moves during the spinner, click before or after load). Keyboard passes.
-- An earlier `cf_clearance` is issued before the final redirect and gets rejected, so
-  the solve only finishes when the challenge page itself is gone.
+Things Cloudflare detects, found the hard way:
+
+- `--remote-debugging-port=0` and `--remote-debugging-pipe`: the clearance is issued but
+  rejected on the next request, so the page reloads forever. A fixed free port works.
+- The `HeadlessChrome` user agent. It is replaced with `--user-agent` (the reduced UA
+  of headful Chrome, major version from `chrome --version`); a CDP user agent override
+  breaks client hints and gets flagged too.
+- CDP mouse clicks on Turnstile are always rejected; keyboard input passes.
+- Attaching to the Turnstile frame on every poll; it is attached once and reused.
 
 ## Development
 
 ```bash
 uv run pytest
-uv run scripts/record.py <name> [light|dark]   # re-record the header GIFs
+uv run scripts/record.py <non-interactive|interactive> [light|dark]   # header GIFs
 ```
 
-`site/` is the test page behind https://cl-skip.tn3w.dev (GitHub Pages, deployed by
-`pages.yml`), put behind a Cloudflare challenge rule.
+`site/` is the test page behind https://cl-skip.tn3w.dev, put behind Cloudflare
+challenge rules: `/` gets a non-interactive challenge, `/interactive` an interactive
+one. `pages.yml` builds it on every push to `site/`.
 
-`scripts/record.py` records Chrome via tab capture (`getDisplayMedia`) → `ffmpeg`
-frames → `gifski`. Needs `ffmpeg` and `gifski`.
+`scripts/record.py` screencasts headless Chrome solving the challenge and encodes the
+frames with `gifski` (needs `gifski`, no display).
