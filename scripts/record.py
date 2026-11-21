@@ -55,19 +55,22 @@ def capture(endpoint: str, target: dict, folder: str, stop: threading.Event) -> 
         while not stop.is_set():
             due = int((time.monotonic() - start) * FRAMES_PER_SECOND)
             for number in range(frame, due + 1) if image else ():
-                Path(folder, f"{number:05d}.jpg").write_bytes(image)
+                Path(folder, f"{number:05d}.png").write_bytes(image)
             frame = due + 1 if image else frame
 
             if new_image := next_frame(connection, page):
                 image, last_frame = new_image, time.monotonic()
             elif time.monotonic() - last_frame >= RESTART_SECONDS:
-                command(connection, page, "Page.startScreencast", format="jpeg")
+                command(connection, page, "Page.startScreencast", format="png")
                 last_frame = time.monotonic()
 
 
 def wait_until_passed(browser: skip.DevTools) -> None:
     challenge_title = browser.targets("page")[0]["title"]
+    deadline = time.monotonic() + skip.TIMEOUT_SECONDS
     while browser.targets("page")[0]["title"] == challenge_title:
+        if time.monotonic() > deadline:
+            raise TimeoutError("the challenge page never went away")
         time.sleep(0.05)
 
 
@@ -101,7 +104,7 @@ def record(url: str, scheme: str, output: Path) -> None:
             stop.set()
             capturer.join()
 
-        frames = sorted(map(str, Path(folder).glob("*.jpg")))
+        frames = sorted(map(str, Path(folder).glob("*.png")))
         options = ["--quiet", "--fps", str(FRAMES_PER_SECOND), "-o", str(output)]
         subprocess.run(["gifski", *options, *frames], check=True)
 
