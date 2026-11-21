@@ -51,7 +51,7 @@ def capture(endpoint: str, target: dict, folder: str, stop: threading.Event) -> 
         start = time.monotonic()
         last_frame = start - RESTART_SECONDS
         frame = 0
-        image = None
+        blank = image = None
         while not stop.is_set():
             due = int((time.monotonic() - start) * FRAMES_PER_SECOND)
             for number in range(frame, due + 1) if image else ():
@@ -59,7 +59,10 @@ def capture(endpoint: str, target: dict, folder: str, stop: threading.Event) -> 
             frame = due + 1 if image else frame
 
             if new_image := next_frame(connection, page):
-                image, last_frame = new_image, time.monotonic()
+                blank = blank or new_image
+                if image or new_image != blank:
+                    image = new_image
+                last_frame = time.monotonic()
             elif time.monotonic() - last_frame >= RESTART_SECONDS:
                 command(connection, page, "Page.startScreencast", format="png")
                 last_frame = time.monotonic()
